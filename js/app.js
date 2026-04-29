@@ -193,10 +193,11 @@ const App = {
         const data = await response.json();
         
         if (data.tasks && data.tasks.length > 0) {
-          // Dedupe: skip tasks whose WhatsApp messageId we already have a todo for
+          // Dedupe: bỏ qua task đã có (theo messageId) HOẶC user từng xóa
           const existing = new Set(this.state.todos.map(t => t.messageId).filter(Boolean));
-          const fresh = data.tasks.filter(t => t.messageId && !existing.has(t.messageId));
-          console.log(`[whatsapp-sync] backend=${data.tasks.length}, existing=${existing.size}, fresh=${fresh.length}`);
+          const dismissed = new Set(this.state.dismissedMessageIds || []);
+          const fresh = data.tasks.filter(t => t.messageId && !existing.has(t.messageId) && !dismissed.has(t.messageId));
+          console.log(`[whatsapp-sync] backend=${data.tasks.length}, existing=${existing.size}, dismissed=${dismissed.size}, fresh=${fresh.length}`);
           if (fresh.length === 0) return;
           fresh.forEach(task => {
             // Nếu tin nhắn có deadline → dùng nó; còn không, mặc định dueDate = hôm nay

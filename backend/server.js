@@ -13,8 +13,35 @@ const PORT = 3000;
 const MAX_BUFFER = 50; // ring buffer — multiple polling clients can each see the same tasks
 const REMINDER_INTERVAL_MS = 30 * 1000; // quét lịch nhắc mỗi 30 giây
 const SCHEDULE_FILE = path.join(__dirname, 'scheduled.json');
+const SEEN_FILE = path.join(__dirname, 'seen.json');
+const SEEN_CAP = 1000; // chỉ giữ N messageId gần nhất, tránh phình file
 let pendingTasks = [];
 let clientReady = false;
+
+// Tập messageId đã xử lý — chống replay khi whatsapp-web.js đồng bộ lại lúc khởi động
+let seenMessageIds = new Set();
+try {
+    if (fs.existsSync(SEEN_FILE)) {
+        const arr = JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8'));
+        if (Array.isArray(arr)) seenMessageIds = new Set(arr);
+        console.log(`👁️  Đã nạp ${seenMessageIds.size} messageId đã xử lý.`);
+    }
+} catch (e) {
+    console.warn('Không đọc được seen.json:', e.message);
+}
+
+function saveSeen() {
+    try {
+        let arr = Array.from(seenMessageIds);
+        if (arr.length > SEEN_CAP) {
+            arr = arr.slice(arr.length - SEEN_CAP);
+            seenMessageIds = new Set(arr);
+        }
+        fs.writeFileSync(SEEN_FILE, JSON.stringify(arr));
+    } catch (e) {
+        console.warn('Không lưu được seen.json:', e.message);
+    }
+}
 
 // Lịch nhắc — persistent qua restart: { [messageId]: { chatId, messageId, content, assignees, dueAt, hasTime, reminded, completed, createdAt } }
 let scheduled = {};
@@ -126,6 +153,14 @@ client.on('message_create', async (msg) => {
     
     // Điều kiện: Trong Group VÀ bắt đầu bằng "#todo" (để tránh spam)
     if (chat.isGroup && text.toLowerCase().startsWith('#todo ')) {
+        const mid = msg.id._serialized;
+        // Chống replay: bỏ qua nếu đã xử lý messageId này
+        if (seenMessageIds.has(mid)) {
+            return;
+        }
+        seenMessageIds.add(mid);
+        saveSeen();
+
         const rawContent = text.substring(6).trim();
         const contact = await msg.getContact();
 

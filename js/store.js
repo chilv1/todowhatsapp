@@ -14,6 +14,7 @@ const Store = {
       todos: [],
       filter: 'all',
       searchQuery: '',
+      dismissedMessageIds: [],
     };
   },
 
@@ -41,6 +42,7 @@ const Store = {
       localStorage.setItem(this.STORAGE_KEY, JSON.stringify({
         todos: state.todos,
         filter: state.filter,
+        dismissedMessageIds: state.dismissedMessageIds || [],
       }));
     } catch (e) {
       console.warn('Failed to save state:', e);
@@ -123,7 +125,15 @@ const Store = {
    * Delete a single todo
    */
   deleteTodo(state, id) {
+    const target = state.todos.find(t => t.id === id);
     state.todos = state.todos.filter(t => t.id !== id);
+    // Nếu task đến từ WhatsApp, ghi nhớ messageId để polling không re-add
+    if (target && target.messageId) {
+      if (!Array.isArray(state.dismissedMessageIds)) state.dismissedMessageIds = [];
+      if (!state.dismissedMessageIds.includes(target.messageId)) {
+        state.dismissedMessageIds.push(target.messageId);
+      }
+    }
     this.save(state);
   },
 
