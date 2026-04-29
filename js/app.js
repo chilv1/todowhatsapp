@@ -228,12 +228,12 @@ const App = {
   },
 
   async clearCompleted() {
-    const count = this.state.todos.filter(t => t.completed && t.source === 'manual').length;
+    const count = this.state.todos.filter(t => t.completed).length;
     if (count === 0) { UI.toast('No completed tasks to clear'); return; }
     try {
       const r = await Store.clearCompleted();
       const removed = (r && r.removed) || count;
-      this.state.todos = this.state.todos.filter(t => !(t.completed && t.source === 'manual'));
+      this.state.todos = this.state.todos.filter(t => !t.completed);
       this.render();
       UI.toast(`Cleared ${removed} completed task${removed > 1 ? 's' : ''}`);
     } catch (e) {

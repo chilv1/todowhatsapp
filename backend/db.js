@@ -77,7 +77,7 @@ const stmts = {
         WHERE message_id = ?
     `),
     deleteTaskById: db.prepare('DELETE FROM tasks WHERE id = ?'),
-    deleteCompleted: db.prepare("DELETE FROM tasks WHERE completed = 1 AND source = 'manual'"),
+    deleteCompleted: db.prepare("DELETE FROM tasks WHERE completed = 1"),
     maxOrder: db.prepare('SELECT COALESCE(MAX(display_order), -1) AS max FROM tasks'),
     markSeen: db.prepare(`INSERT OR IGNORE INTO seen_messages (message_id, seen_at) VALUES (?, ?)`),
     isSeen: db.prepare('SELECT 1 FROM seen_messages WHERE message_id = ? LIMIT 1'),
@@ -241,7 +241,8 @@ function deleteTask(id) {
 }
 
 /**
- * Xóa task manual đã hoàn thành. Task whatsapp giữ lại để có lịch sử.
+ * Xóa mọi task đã hoàn thành (cả manual lẫn whatsapp).
+ * seen_messages giữ messageId nên bot không re-ingest task whatsapp đã xóa.
  * Trả về số dòng xóa.
  */
 function clearCompletedManual() {
