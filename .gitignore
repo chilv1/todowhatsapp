@@ -8,6 +8,14 @@ backend/.wwebjs_cache/
 # Runtime state (chứa số điện thoại, chatId thật)
 backend/scheduled.json
 backend/seen.json
+backend/scheduled.json.imported
+backend/seen.json.imported
+
+# SQLite (data + WAL/SHM)
+backend/data.db
+backend/data.db-journal
+backend/data.db-wal
+backend/data.db-shm
 
 # OS / editor
 .DS_Store
