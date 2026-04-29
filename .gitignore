@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# WhatsApp session/auth (CHỨA TOKEN ĐĂNG NHẬP - KHÔNG ĐƯỢC PUSH)
+backend/.wwebjs_auth/
+backend/.wwebjs_cache/
+
+# Runtime state (chứa số điện thoại, chatId thật)
+backend/scheduled.json
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
