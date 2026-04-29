@@ -34,6 +34,19 @@ function parseDeadline(content) {
     return { dueAt: parsed.date.toISOString(), hasTime: parsed.hasTime, cleanedContent: before };
 }
 
+function formatDueForDisplay(dueAtIso, hasTime) {
+    const d = new Date(dueAtIso);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yy = d.getFullYear();
+    if (hasTime) {
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        return `${hh}:${mi} ${dd}/${mm}/${yy}`;
+    }
+    return `${dd}/${mm}/${yy}`;
+}
+
 function parseDateCandidate(s) {
     let m;
     // YYYY-MM-DD HH:mm
@@ -139,6 +152,7 @@ client.on('message_create', async (msg) => {
         }
 
         const createdAt = new Date().toISOString();
+        let inserted = false;
         try {
             db.insertWhatsappTask({
                 id: mid,
@@ -153,6 +167,7 @@ client.on('message_create', async (msg) => {
                 assignees,
                 createdAt,
             });
+            inserted = true;
         } catch (e) {
             console.error('Lưu task vào DB lỗi:', e.message);
         }
@@ -161,6 +176,23 @@ client.on('message_create', async (msg) => {
         const dueStr = dueAt ? ` [hạn: ${new Date(dueAt).toLocaleString('vi-VN')}]` : '';
         console.log(`📥 Nhận task mới từ nhóm ${chat.name}: ${taskContent}${tagStr}${dueStr}`);
         console.log(`   chatId=${chat.id._serialized} messageId=${mid}`);
+
+        // Confirm trong nhóm WhatsApp: ai được giao, nội dung, deadline
+        if (inserted) {
+            try {
+                const tagPrefix = assignees.length ? assignees.map(a => `@${a.number}`).join(' ') : '';
+                const dueDisplay = dueAt ? formatDueForDisplay(dueAt, hasTime) : null;
+                const headline = tagPrefix ? `✅ Đã giao task cho ${tagPrefix}` : `✅ Đã ghi nhận task`;
+                const lines = [headline];
+                if (displayContent) lines.push(`📝 ${displayContent}`);
+                if (dueDisplay) lines.push(`⏰ Hạn: ${dueDisplay}`);
+                const replyText = lines.join('\n');
+                const sendOpts = assignees.length ? { mentions: assignees.map(a => a.id) } : undefined;
+                await msg.reply(replyText, undefined, sendOpts);
+            } catch (e) {
+                console.warn('Confirm reply failed:', e.message);
+            }
+        }
     }
 });
 
