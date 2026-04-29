@@ -116,14 +116,19 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.5);cursor:p
 .modal-actions .btn-add.btn-save-edit{width:auto;padding:.55rem 1.4rem;border-radius:var(--radius-lg);font-size:.85rem;font-weight:600}
 
 /* Task Actions */
-.task-actions{display:flex;gap:2px;opacity:0;transition:opacity var(--transition-fast)}
+.task-actions{display:flex;gap:2px;opacity:.55;transition:opacity var(--transition-fast)}
 .task-item:hover .task-actions{opacity:1}
-.btn-task{width:28px;height:28px;border-radius:var(--radius-sm);border:none;background:transparent;
-  color:var(--text-3);cursor:pointer;display:flex;align-items:center;justify-content:center;
+.btn-task,
+.btn-task-action{width:30px;height:30px;border-radius:var(--radius-sm);border:none;background:transparent;
+  color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center;
   transition:all var(--transition-fast)}
-.btn-task svg{width:14px;height:14px}
-.btn-task:hover{background:var(--bg-elevated);color:var(--text-1)}
-.btn-task.btn-delete:hover{background:rgba(255,107,107,.12);color:var(--danger)}
+.btn-task svg,
+.btn-task-action svg{width:15px;height:15px}
+.btn-task:hover,
+.btn-task-action:hover{background:var(--bg-elevated);color:var(--text-1)}
+.btn-task.btn-delete:hover,
+.btn-task-action.btn-task-delete:hover{background:rgba(255,107,107,.12);color:var(--danger)}
+.btn-task-action.btn-task-edit:hover{color:var(--primary)}
 
 /* ========== EMPTY STATE ========== */
 .empty-state{text-align:center;padding:2.5rem 1rem;display:none}
