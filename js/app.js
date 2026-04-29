@@ -1,132 +1,112 @@
 /* ============================================
-   App — Premium Todo App (Main Controller)
+   App — Main Controller (Phase 3: API-backed)
    ============================================ */
 
 const App = {
-  state: null,
+  state: { todos: [], filter: 'all', searchQuery: '' },
   theme: 'dark',
+  editing: false,           // pause polling khi đang inline edit
+  refreshIntervalMs: 5000,
 
-  /* ===== Initialize ===== */
-  init() {
-    // Load state
-    this.state = Store.load();
+  async init() {
+    const prefs = Store.loadPrefs();
+    this.state.filter = prefs.filter || 'all';
+    this.state.searchQuery = '';
     this.theme = Store.loadTheme();
 
-    // Init UI
     UI.init();
     UI.setTheme(this.theme);
-
-    // Init drag & drop
     DragDrop.init();
-
-    // Bind events
     this.bindEvents();
 
-    // Initial render
-    this.render();
-
-    // Set minimum date to today for due date input
     UI.els.dueDate.min = Utils.today();
-
-    // Focus input
     UI.els.taskInput.focus();
 
-    // Sync WhatsApp Tasks
-    this.syncWhatsAppTasks();
+    // Migration một lần: localStorage → backend
+    try {
+      const n = await Store.migrateLegacyIfAny();
+      if (n > 0) UI.toast(`Đã chuyển ${n} task từ trình duyệt lên server.`);
+    } catch (_) { /* ignore */ }
 
-    console.log('✅ Todo App initialized');
+    // Lần đầu render từ server
+    await this.refresh();
+
+    // Polling đồng bộ task (bao gồm task mới từ WhatsApp)
+    setInterval(() => {
+      if (!this.editing) this.refresh().catch(() => {});
+    }, this.refreshIntervalMs);
+
+    console.log('✅ Todo App initialized (API mode)');
+  },
+
+  async refresh() {
+    try {
+      const todos = await Store.fetchAll();
+      this.state.todos = todos;
+      this.render();
+    } catch (e) {
+      console.warn('refresh failed:', e.message);
+    }
   },
 
   /* ===== Bind All Events ===== */
   bindEvents() {
-    // Add task
     UI.els.btnAdd.addEventListener('click', () => this.addTask());
     UI.els.taskInput.addEventListener('keydown', e => {
       if (e.key === 'Enter') this.addTask();
     });
 
-    // Task list actions (event delegation)
     UI.els.taskList.addEventListener('click', e => {
       const btn = e.target.closest('[data-action]');
       if (!btn) return;
-
       const action = btn.dataset.action;
       const id = btn.dataset.id;
-
       switch (action) {
-        case 'toggle':
-          this.toggleTask(id);
-          break;
-        case 'delete':
-          this.deleteTask(id, btn.closest('.task-item'));
-          break;
-        case 'edit':
-          this.editTask(id, btn.closest('.task-item'));
-          break;
+        case 'toggle': this.toggleTask(id); break;
+        case 'delete': this.deleteTask(id, btn.closest('.task-item')); break;
+        case 'edit':   this.editTask(id, btn.closest('.task-item')); break;
       }
     });
 
-    // Filter tabs
     UI.els.filterTabs.addEventListener('click', e => {
       const tab = e.target.closest('.filter-tab');
       if (!tab) return;
       this.state.filter = tab.dataset.filter;
-      Store.save(this.state);
+      Store.savePrefs({ filter: this.state.filter });
       this.render();
     });
 
-    // Search
     UI.els.searchInput.addEventListener('input', Utils.debounce(e => {
       this.state.searchQuery = e.target.value;
       this.render();
     }, 200));
 
-    // Clear completed
-    UI.els.btnClear.addEventListener('click', () => {
-      const count = this.state.todos.filter(t => t.completed).length;
-      if (count === 0) {
-        UI.toast('No completed tasks to clear');
-        return;
-      }
-      Store.clearCompleted(this.state);
-      this.render();
-      UI.toast(`Cleared ${count} completed task${count > 1 ? 's' : ''}`);
-    });
-
-    // Theme toggle
+    UI.els.btnClear.addEventListener('click', () => this.clearCompleted());
     UI.els.btnTheme.addEventListener('click', () => this.toggleTheme());
 
-    // Stats
     UI.els.btnStats.addEventListener('click', () => {
-      const stats = Store.getStats(this.state);
-      UI.openStats(stats);
+      UI.openStats(Store.getStats(this.state.todos));
     });
     UI.els.btnCloseStats.addEventListener('click', () => UI.closeStats());
     UI.els.modalStats.addEventListener('click', e => {
       if (e.target === UI.els.modalStats) UI.closeStats();
     });
 
-    // Export
     UI.els.btnExport.addEventListener('click', () => {
-      if (this.state.todos.length === 0) {
-        UI.toast('No tasks to export');
-        return;
-      }
-      Store.exportJSON(this.state);
+      if (this.state.todos.length === 0) { UI.toast('No tasks to export'); return; }
+      Store.exportJSON(this.state.todos);
       UI.toast('Tasks exported successfully!');
     });
 
-    // Import
     UI.els.btnImport.addEventListener('click', () => UI.els.importFile.click());
     UI.els.importFile.addEventListener('change', e => {
       const file = e.target.files[0];
       if (!file) return;
-
       const reader = new FileReader();
-      reader.onload = ev => {
-        const count = Store.importJSON(this.state, ev.target.result);
+      reader.onload = async ev => {
+        const count = await Store.importJSON(ev.target.result);
         if (count > 0) {
-          this.render();
+          await this.refresh();
           UI.toast(`Imported ${count} new task${count > 1 ? 's' : ''}`);
         } else if (count === 0) {
           UI.toast('No new tasks to import');
@@ -135,181 +115,151 @@ const App = {
         }
       };
       reader.readAsText(file);
-      e.target.value = ''; // Reset file input
+      e.target.value = '';
     });
 
-    // Keyboard shortcuts
     document.addEventListener('keydown', e => {
-      // Don't capture when typing in inputs
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-        return;
-      }
-
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
       switch (e.key) {
-        case 'n':
-        case 'N':
-          e.preventDefault();
-          UI.els.taskInput.focus();
-          break;
-        case '/':
-          e.preventDefault();
-          UI.els.searchInput.focus();
-          break;
-        case '1':
-          this.state.filter = 'all';
-          Store.save(this.state);
-          this.render();
-          break;
-        case '2':
-          this.state.filter = 'active';
-          Store.save(this.state);
-          this.render();
-          break;
-        case '3':
-          this.state.filter = 'completed';
-          Store.save(this.state);
-          this.render();
-          break;
-        case 't':
-        case 'T':
-          this.toggleTheme();
-          break;
-        case '?':
-          UI.toast('N: New task  /: Search  1-3: Filter  T: Theme');
-          break;
-        case 'Escape':
-          UI.closeStats();
-          break;
+        case 'n': case 'N': e.preventDefault(); UI.els.taskInput.focus(); break;
+        case '/': e.preventDefault(); UI.els.searchInput.focus(); break;
+        case '1': this.state.filter = 'all'; Store.savePrefs({ filter: 'all' }); this.render(); break;
+        case '2': this.state.filter = 'active'; Store.savePrefs({ filter: 'active' }); this.render(); break;
+        case '3': this.state.filter = 'completed'; Store.savePrefs({ filter: 'completed' }); this.render(); break;
+        case 't': case 'T': this.toggleTheme(); break;
+        case '?': UI.toast('N: New task  /: Search  1-3: Filter  T: Theme'); break;
+        case 'Escape': UI.closeStats(); break;
       }
     });
   },
 
-  /* ===== Sync WhatsApp Tasks ===== */
-  syncWhatsAppTasks() {
-    setInterval(async () => {
-      try {
-        const response = await fetch('http://localhost:3000/api/tasks');
-        if (!response.ok) return;
-        const data = await response.json();
-        
-        if (data.tasks && data.tasks.length > 0) {
-          // Dedupe: bỏ qua task đã có (theo messageId) HOẶC user từng xóa
-          const existing = new Set(this.state.todos.map(t => t.messageId).filter(Boolean));
-          const dismissed = new Set(this.state.dismissedMessageIds || []);
-          const fresh = data.tasks.filter(t => t.messageId && !existing.has(t.messageId) && !dismissed.has(t.messageId));
-          console.log(`[whatsapp-sync] backend=${data.tasks.length}, existing=${existing.size}, dismissed=${dismissed.size}, fresh=${fresh.length}`);
-          if (fresh.length === 0) return;
-          fresh.forEach(task => {
-            // Nếu tin nhắn có deadline → dùng nó; còn không, mặc định dueDate = hôm nay
-            let dueDate = Utils.today();
-            let dueTime = null;
-            if (task.dueAt) {
-              const d = new Date(task.dueAt);
-              dueDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-              if (task.hasTime) {
-                dueTime = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-              }
-            }
-            Store.addTodo(this.state, {
-              text: task.text,
-              category: 'work',
-              priority: 'medium',
-              dueDate,
-              dueTime,
-              source: task.source,
-              chatId: task.chatId,
-              messageId: task.messageId,
-              assignees: task.assignees,
-            });
-          });
-          this.render();
-          if (window.UI && UI.toast) {
-            UI.toast(`Đã thêm ${fresh.length} công việc từ WhatsApp! 📱`);
-          }
-        }
-      } catch (e) {
-        // Backend might be offline, silently ignore
-      }
-    }, 5000); // Poll every 5 seconds
+  /* ===== Actions ===== */
+
+  async addTask() {
+    const text = UI.els.taskInput.value.trim();
+    if (!text) { UI.shakeInput(); return; }
+    try {
+      const created = await Store.create({
+        text,
+        priority: UI.els.prioritySelect.value,
+        category: UI.els.categorySelect.value,
+        dueDate: UI.els.dueDate.value || null,
+      });
+      // Optimistic prepend để khỏi flicker chờ refresh
+      this.state.todos = [created, ...this.state.todos];
+      UI.resetForm();
+      this.render();
+      UI.toast('Task added ✨');
+    } catch (e) {
+      UI.toast('Lỗi: ' + e.message);
+    }
   },
 
-  /* ===== Add Task ===== */
-  addTask() {
-    const text = UI.els.taskInput.value.trim();
+  async toggleTask(id) {
+    const todo = this.state.todos.find(t => t.id === id);
+    if (!todo) return;
+    const target = !todo.completed;
 
-    if (!text) {
-      UI.shakeInput();
+    try {
+      let updated;
+      if (target && todo.source === 'whatsapp' && todo.chatId && todo.messageId) {
+        await Store.complete(id);
+        UI.toast('Đã thông báo nhóm WhatsApp ✅');
+        updated = await this._getById(id);
+      } else {
+        updated = await Store.update(id, { completed: target });
+      }
+      // Cập nhật cache + animate
+      this.state.todos = this.state.todos.map(t => t.id === id ? updated : t);
+      const el = UI.els.taskList.querySelector(`[data-id="${id}"]`);
+      if (el && updated.completed) {
+        el.classList.add('just-completed');
+        setTimeout(() => el.classList.remove('just-completed'), 500);
+      }
+      this.render();
+    } catch (e) {
+      UI.toast('Lỗi: ' + e.message);
+    }
+  },
+
+  async _getById(id) {
+    // Lấy lại 1 task sau action (avoid full refresh)
+    try { return await Store._request(`/api/todos/${encodeURIComponent(id)}`); }
+    catch (_) { return null; }
+  },
+
+  deleteTask(id, taskItem) {
+    if (!taskItem) {
+      Store.remove(id).then(() => this.refresh()).catch(e => UI.toast('Lỗi: ' + e.message));
       return;
     }
-
-    const todo = Store.addTodo(this.state, {
-      text,
-      priority: UI.els.prioritySelect.value,
-      dueDate: UI.els.dueDate.value || null,
-      category: UI.els.categorySelect.value,
-    });
-
-    UI.resetForm();
-    this.render();
-    UI.toast('Task added ✨');
-  },
-
-  /* ===== Toggle Task ===== */
-  toggleTask(id) {
-    const todo = Store.toggleTodo(this.state, id);
-    if (!todo) return;
-
-    // Add celebration class
-    const taskItem = UI.els.taskList.querySelector(`[data-id="${id}"]`);
-    if (taskItem && todo.completed) {
-      taskItem.classList.add('just-completed');
-      setTimeout(() => taskItem.classList.remove('just-completed'), 500);
-    }
-
-    // Notify originating WhatsApp group on first completion
-    if (todo.completed && todo.source === 'whatsapp' && todo.chatId && todo.messageId && !todo.notifiedAt) {
-      fetch('http://localhost:3000/api/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatId: todo.chatId,
-          messageId: todo.messageId,
-          text: todo.text,
-          assignees: todo.assignees || [],
-        }),
-      }).then(r => {
-        if (r.ok) {
-          todo.notifiedAt = new Date().toISOString();
-          Store.save(this.state);
-          UI.toast('Đã thông báo nhóm WhatsApp ✅');
-        }
-      }).catch(() => { /* backend offline — silently skip */ });
-    }
-
-    this.render();
-  },
-
-  /* ===== Delete Task ===== */
-  deleteTask(id, taskItem) {
-    if (!taskItem) return;
-
-    // Animate out first
     taskItem.classList.add('removing');
-    taskItem.addEventListener('animationend', () => {
-      Store.deleteTodo(this.state, id);
-      this.render();
-      UI.toast('Task deleted');
-    });
+    taskItem.addEventListener('animationend', async () => {
+      try {
+        await Store.remove(id);
+        this.state.todos = this.state.todos.filter(t => t.id !== id);
+        this.render();
+        UI.toast('Task deleted');
+      } catch (e) {
+        UI.toast('Lỗi: ' + e.message);
+        await this.refresh();
+      }
+    }, { once: true });
   },
 
-  /* ===== Edit Task ===== */
   editTask(id, taskItem) {
     const todo = this.state.todos.find(t => t.id === id);
     if (!todo || !taskItem) return;
-    UI.startEdit(taskItem, todo);
+    this.editing = true;
+    UI.startEdit(taskItem, todo, async (newText) => {
+      try {
+        const updated = await Store.update(id, { text: newText });
+        this.state.todos = this.state.todos.map(t => t.id === id ? updated : t);
+      } catch (e) {
+        UI.toast('Lỗi: ' + e.message);
+      } finally {
+        this.editing = false;
+        this.render();
+      }
+    }, () => {
+      this.editing = false;
+      this.render();
+    });
   },
 
-  /* ===== Toggle Theme ===== */
+  async clearCompleted() {
+    const count = this.state.todos.filter(t => t.completed && t.source === 'manual').length;
+    if (count === 0) { UI.toast('No completed tasks to clear'); return; }
+    try {
+      const r = await Store.clearCompleted();
+      const removed = (r && r.removed) || count;
+      this.state.todos = this.state.todos.filter(t => !(t.completed && t.source === 'manual'));
+      this.render();
+      UI.toast(`Cleared ${removed} completed task${removed > 1 ? 's' : ''}`);
+    } catch (e) {
+      UI.toast('Lỗi: ' + e.message);
+    }
+  },
+
+  async onReorder(fromId, toId) {
+    const ids = this.state.todos.map(t => t.id);
+    const fromIdx = ids.indexOf(fromId);
+    const toIdx = ids.indexOf(toId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    ids.splice(fromIdx, 1);
+    ids.splice(toIdx, 0, fromId);
+    // Optimistic local reorder
+    const map = new Map(this.state.todos.map(t => [t.id, t]));
+    this.state.todos = ids.map(id => map.get(id)).filter(Boolean);
+    this.render();
+    try {
+      await Store.reorder(ids);
+    } catch (e) {
+      UI.toast('Reorder failed: ' + e.message);
+      await this.refresh();
+    }
+  },
+
   toggleTheme() {
     this.theme = this.theme === 'dark' ? 'light' : 'dark';
     Store.saveTheme(this.theme);
@@ -317,14 +267,15 @@ const App = {
     UI.toast(`${this.theme === 'dark' ? '🌙' : '☀️'} ${this.theme.charAt(0).toUpperCase() + this.theme.slice(1)} mode`);
   },
 
-  /* ===== Render Everything ===== */
   render() {
-    const filtered = Store.getFilteredTodos(this.state);
+    const filtered = Store.getFilteredTodos(this.state.todos, {
+      filter: this.state.filter,
+      searchQuery: this.state.searchQuery,
+    });
     UI.renderTasks(filtered);
-    UI.updateCount(Store.activeCount(this.state));
+    UI.updateCount(Store.activeCount(this.state.todos));
     UI.setActiveFilter(this.state.filter);
   },
 };
 
-/* ===== Start the App ===== */
 document.addEventListener('DOMContentLoaded', () => App.init());

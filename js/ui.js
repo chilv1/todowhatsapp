@@ -137,8 +137,11 @@ const UI = {
     }, duration);
   },
 
-  /* ===== Inline Edit ===== */
-  startEdit(taskItem, todo) {
+  /* ===== Inline Edit =====
+     onCommit(newText) — async; gọi khi user xác nhận text mới
+     onCancel() — gọi khi user hủy hoặc text không đổi (để App tắt cờ editing)
+  */
+  startEdit(taskItem, todo, onCommit, onCancel) {
     const textEl = taskItem.querySelector('.task-text');
     const original = todo.text;
 
@@ -151,12 +154,17 @@ const UI = {
     input.focus();
     input.select();
 
-    const finishEdit = () => {
+    let finished = false;
+    const finishEdit = async () => {
+      if (finished) return;
+      finished = true;
       const newText = input.value.trim();
       if (newText && newText !== original) {
-        Store.updateTodo(App.state, todo.id, newText);
+        try { await onCommit(newText); }
+        catch (_) { if (typeof onCancel === 'function') onCancel(); }
+      } else {
+        if (typeof onCancel === 'function') onCancel();
       }
-      App.render();
     };
 
     input.addEventListener('blur', finishEdit);

@@ -256,6 +256,16 @@ function clearCompletedManual() {
     return stmts.deleteCompleted.run().changes;
 }
 
+const reorderTxn = db.transaction((ids) => {
+    const stmt = db.prepare('UPDATE tasks SET display_order = ?, updated_at = ? WHERE id = ?');
+    const now = new Date().toISOString();
+    ids.forEach((id, idx) => stmt.run(idx, now, id));
+});
+
+function reorderTasks(ids) {
+    reorderTxn(ids);
+}
+
 function markNotifiedComplete(taskId) {
     const now = new Date().toISOString();
     stmts.setNotifiedComplete.run(now, now, taskId);
@@ -341,4 +351,5 @@ module.exports = {
     updateTask,
     deleteTask,
     clearCompletedManual,
+    reorderTasks,
 };

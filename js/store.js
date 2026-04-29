@@ -1,210 +1,169 @@
 /* ============================================
-   Store — Premium Todo App (localStorage)
+   Store — API client (Phase 3)
    ============================================ */
 
 const Store = {
-  STORAGE_KEY: 'todo-app-data',
+  API_BASE: 'http://localhost:3000',
+  PREFS_KEY: 'todo-app-prefs',
   THEME_KEY: 'todo-app-theme',
+  LEGACY_KEY: 'todo-app-data',
 
-  /**
-   * Default app state
-   */
-  defaultState() {
-    return {
-      todos: [],
-      filter: 'all',
-      searchQuery: '',
-      dismissedMessageIds: [],
-    };
+  /* ===== UI prefs (sync, local) ===== */
+
+  loadPrefs() {
+    try {
+      const raw = localStorage.getItem(this.PREFS_KEY);
+      if (raw) return { filter: 'all', searchQuery: '', ...JSON.parse(raw) };
+    } catch (_) { /* ignore */ }
+    return { filter: 'all', searchQuery: '' };
   },
 
-  /**
-   * Load state from localStorage
-   */
-  load() {
+  savePrefs(prefs) {
     try {
-      const raw = localStorage.getItem(this.STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return { ...this.defaultState(), ...parsed };
-      }
-    } catch (e) {
-      console.warn('Failed to load state:', e);
-    }
-    return this.defaultState();
-  },
-
-  /**
-   * Save state to localStorage
-   */
-  save(state) {
-    try {
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify({
-        todos: state.todos,
-        filter: state.filter,
-        dismissedMessageIds: state.dismissedMessageIds || [],
+      localStorage.setItem(this.PREFS_KEY, JSON.stringify({
+        filter: prefs.filter || 'all',
       }));
-    } catch (e) {
-      console.warn('Failed to save state:', e);
-    }
+    } catch (_) { /* ignore */ }
   },
 
-  /**
-   * Load theme preference
-   */
   loadTheme() {
-    try {
-      return localStorage.getItem(this.THEME_KEY) || 'dark';
-    } catch (e) {
-      return 'dark';
-    }
+    try { return localStorage.getItem(this.THEME_KEY) || 'dark'; }
+    catch (_) { return 'dark'; }
   },
 
-  /**
-   * Save theme preference
-   */
   saveTheme(theme) {
+    try { localStorage.setItem(this.THEME_KEY, theme); } catch (_) { /* ignore */ }
+  },
+
+  /* ===== Server-backed CRUD ===== */
+
+  async _request(path, options = {}) {
+    const r = await fetch(this.API_BASE + path, {
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      ...options,
+    });
+    if (!r.ok) {
+      const msg = await r.text().catch(() => r.statusText);
+      throw new Error(`${r.status} ${msg}`);
+    }
+    if (r.status === 204) return null;
+    return r.json();
+  },
+
+  async fetchAll() {
+    const data = await this._request('/api/todos');
+    return data.todos || [];
+  },
+
+  async create({ text, priority, category, dueDate, dueTime }) {
+    return this._request('/api/todos', {
+      method: 'POST',
+      body: JSON.stringify({ text, priority, category, dueDate: dueDate || null, dueTime: dueTime || null }),
+    });
+  },
+
+  async update(id, patch) {
+    return this._request(`/api/todos/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+  },
+
+  async toggle(id, completed) {
+    return this.update(id, { completed });
+  },
+
+  async remove(id) {
+    return this._request(`/api/todos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  async complete(id) {
+    return this._request(`/api/todos/${encodeURIComponent(id)}/complete`, { method: 'POST' });
+  },
+
+  async clearCompleted() {
+    return this._request('/api/todos/clear-completed', { method: 'POST' });
+  },
+
+  async reorder(ids) {
+    return this._request('/api/todos/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
+  },
+
+  /* ===== One-shot legacy migration ===== */
+
+  async migrateLegacyIfAny() {
+    const raw = localStorage.getItem(this.LEGACY_KEY);
+    if (!raw) return 0;
     try {
-      localStorage.setItem(this.THEME_KEY, theme);
-    } catch (e) {
-      console.warn('Failed to save theme:', e);
-    }
-  },
-
-  /* ===== CRUD Operations ===== */
-
-  /**
-   * Add a new todo
-   */
-  addTodo(state, { text, priority, dueDate, dueTime, category, source, chatId, messageId, assignees }) {
-    const todo = {
-      id: Utils.uuid(),
-      text: text.trim(),
-      completed: false,
-      priority: priority || 'medium',
-      dueDate: dueDate || null,
-      category: category || 'personal',
-      createdAt: new Date().toISOString(),
-      order: state.todos.length,
-    };
-    if (dueTime) todo.dueTime = dueTime;
-    if (source) todo.source = source;
-    if (chatId) todo.chatId = chatId;
-    if (messageId) todo.messageId = messageId;
-    if (Array.isArray(assignees) && assignees.length) todo.assignees = assignees;
-    state.todos.unshift(todo);
-    this.save(state);
-    return todo;
-  },
-
-  /**
-   * Toggle todo completion
-   */
-  toggleTodo(state, id) {
-    const todo = state.todos.find(t => t.id === id);
-    if (todo) {
-      todo.completed = !todo.completed;
-      this.save(state);
-    }
-    return todo;
-  },
-
-  /**
-   * Update todo text
-   */
-  updateTodo(state, id, newText) {
-    const todo = state.todos.find(t => t.id === id);
-    if (todo && newText.trim()) {
-      todo.text = newText.trim();
-      this.save(state);
-    }
-    return todo;
-  },
-
-  /**
-   * Delete a single todo
-   */
-  deleteTodo(state, id) {
-    const target = state.todos.find(t => t.id === id);
-    state.todos = state.todos.filter(t => t.id !== id);
-    // Nếu task đến từ WhatsApp, ghi nhớ messageId để polling không re-add
-    if (target && target.messageId) {
-      if (!Array.isArray(state.dismissedMessageIds)) state.dismissedMessageIds = [];
-      if (!state.dismissedMessageIds.includes(target.messageId)) {
-        state.dismissedMessageIds.push(target.messageId);
+      const data = JSON.parse(raw);
+      // Bỏ task whatsapp (đã có trong DB qua bot). Chỉ migrate task tự thêm.
+      const todos = (data.todos || []).filter(t => !t.messageId);
+      let migrated = 0;
+      for (const t of todos) {
+        try {
+          await this.create({
+            text: t.text,
+            priority: t.priority,
+            category: t.category,
+            dueDate: t.dueDate || null,
+            dueTime: t.dueTime || null,
+          });
+          migrated++;
+        } catch (e) {
+          console.warn('Migrate task lỗi:', e.message);
+        }
       }
+      // Sao lưu rồi xóa key cũ
+      localStorage.setItem(this.LEGACY_KEY + '_migrated_at', new Date().toISOString());
+      localStorage.removeItem(this.LEGACY_KEY);
+      return migrated;
+    } catch (e) {
+      console.error('Migration parse failed:', e);
+      return 0;
     }
-    this.save(state);
   },
 
-  /**
-   * Clear all completed todos
-   */
-  clearCompleted(state) {
-    state.todos = state.todos.filter(t => !t.completed);
-    this.save(state);
-  },
+  /* ===== Pure helpers (operate on client cache) ===== */
 
-  /**
-   * Reorder todos (drag & drop)
-   */
-  reorder(state, fromId, toId) {
-    const fromIndex = state.todos.findIndex(t => t.id === fromId);
-    const toIndex = state.todos.findIndex(t => t.id === toId);
-    if (fromIndex === -1 || toIndex === -1) return;
-
-    const [moved] = state.todos.splice(fromIndex, 1);
-    state.todos.splice(toIndex, 0, moved);
-
-    // Update order numbers
-    state.todos.forEach((t, i) => t.order = i);
-    this.save(state);
-  },
-
-  /* ===== Filtered Views ===== */
-
-  /**
-   * Get filtered and searched todos
-   */
-  getFilteredTodos(state) {
-    let list = [...state.todos];
-
-    // Filter by status
-    if (state.filter === 'active') {
-      list = list.filter(t => !t.completed);
-    } else if (state.filter === 'completed') {
-      list = list.filter(t => t.completed);
-    }
-
-    // Filter by search
-    if (state.searchQuery) {
-      const q = state.searchQuery.toLowerCase();
+  getFilteredTodos(todos, { filter, searchQuery }) {
+    let list = [...(todos || [])];
+    if (filter === 'active') list = list.filter(t => !t.completed);
+    else if (filter === 'completed') list = list.filter(t => t.completed);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
       list = list.filter(t =>
-        t.text.toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q)
+        (t.text || '').toLowerCase().includes(q) ||
+        (t.category || '').toLowerCase().includes(q)
       );
     }
-
     return list;
   },
 
-  /**
-   * Count active (not completed) todos
-   */
-  activeCount(state) {
-    return state.todos.filter(t => !t.completed).length;
+  activeCount(todos) {
+    return (todos || []).filter(t => !t.completed).length;
+  },
+
+  getStats(todos) {
+    const all = todos || [];
+    const total = all.length;
+    const completed = all.filter(t => t.completed).length;
+    const active = total - completed;
+    const overdue = all.filter(t => !t.completed && Utils.isOverdue(t.dueDate)).length;
+    const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+    const byPriority = { high: 0, medium: 0, low: 0 };
+    for (const t of all) {
+      if (byPriority[t.priority] !== undefined) byPriority[t.priority]++;
+    }
+    return { total, completed, active, overdue, completionRate, byPriority };
   },
 
   /* ===== Export / Import ===== */
 
-  /**
-   * Export todos as JSON
-   */
-  exportJSON(state) {
-    const data = {
-      exportedAt: new Date().toISOString(),
-      todos: state.todos,
-    };
+  exportJSON(todos) {
+    const data = { exportedAt: new Date().toISOString(), todos: todos || [] };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -214,44 +173,28 @@ const Store = {
     URL.revokeObjectURL(url);
   },
 
-  /**
-   * Import todos from JSON
-   */
-  importJSON(state, jsonString) {
+  async importJSON(jsonString) {
     try {
       const data = JSON.parse(jsonString);
-      if (data.todos && Array.isArray(data.todos)) {
-        // Merge: add imported tasks that don't already exist
-        const existingIds = new Set(state.todos.map(t => t.id));
-        const newTodos = data.todos.filter(t => !existingIds.has(t.id));
-        state.todos = [...newTodos, ...state.todos];
-        this.save(state);
-        return newTodos.length;
+      if (!data.todos || !Array.isArray(data.todos)) return 0;
+      let imported = 0;
+      for (const t of data.todos) {
+        if (t.messageId) continue; // bỏ task whatsapp — đã có trong DB
+        try {
+          await this.create({
+            text: t.text,
+            priority: t.priority,
+            category: t.category,
+            dueDate: t.dueDate || null,
+            dueTime: t.dueTime || null,
+          });
+          imported++;
+        } catch (_) { /* skip lỗi từng item */ }
       }
-      return 0;
+      return imported;
     } catch (e) {
       console.error('Import failed:', e);
       return -1;
     }
-  },
-
-  /* ===== Statistics ===== */
-
-  /**
-   * Get statistics
-   */
-  getStats(state) {
-    const total = state.todos.length;
-    const completed = state.todos.filter(t => t.completed).length;
-    const active = total - completed;
-    const overdue = state.todos.filter(t => !t.completed && Utils.isOverdue(t.dueDate)).length;
-    const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-    const byPriority = { high: 0, medium: 0, low: 0 };
-    state.todos.forEach(t => {
-      if (byPriority[t.priority] !== undefined) byPriority[t.priority]++;
-    });
-
-    return { total, completed, active, overdue, completionRate, byPriority };
   },
 };

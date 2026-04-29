@@ -319,6 +319,15 @@ app.post('/api/todos/clear-completed', (req, res) => {
     res.json({ removed });
 });
 
+app.post('/api/todos/reorder', (req, res) => {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.some(x => typeof x !== 'string')) {
+        return res.status(400).json({ error: 'ids[] (string) required' });
+    }
+    db.reorderTasks(ids);
+    res.json({ ok: true });
+});
+
 /**
  * Mark complete + (nếu là task whatsapp) reply tag vào nhóm.
  * Body không cần — server tự lấy chatId/assignees từ DB.

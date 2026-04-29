@@ -66,8 +66,7 @@ const DragDrop = {
 
       const targetId = targetItem.dataset.id;
       if (this.draggedId !== targetId) {
-        Store.reorder(App.state, this.draggedId, targetId);
-        App.render();
+        App.onReorder(this.draggedId, targetId);
         UI.toast('Task reordered');
       }
     });
