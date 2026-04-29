@@ -64,7 +64,7 @@ const App = {
       switch (action) {
         case 'toggle': this.toggleTask(id); break;
         case 'delete': this.deleteTask(id, btn.closest('.task-item')); break;
-        case 'edit':   this.editTask(id, btn.closest('.task-item')); break;
+        case 'edit':   this.editTask(id); break;
       }
     });
 
@@ -90,6 +90,18 @@ const App = {
     UI.els.btnCloseStats.addEventListener('click', () => UI.closeStats());
     UI.els.modalStats.addEventListener('click', e => {
       if (e.target === UI.els.modalStats) UI.closeStats();
+    });
+
+    // Edit modal
+    UI.els.btnCloseEdit.addEventListener('click', () => UI.closeEditModal());
+    UI.els.btnCancelEdit.addEventListener('click', () => UI.closeEditModal());
+    UI.els.modalEdit.addEventListener('click', e => {
+      if (e.target === UI.els.modalEdit) UI.closeEditModal();
+    });
+    UI.els.btnSaveEdit.addEventListener('click', () => this.commitEdit());
+    UI.els.editText.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); this.commitEdit(); }
+      if (e.key === 'Escape') { e.preventDefault(); UI.closeEditModal(); this.editing = false; }
     });
 
     UI.els.btnExport.addEventListener('click', () => {
@@ -128,7 +140,7 @@ const App = {
         case '3': this.state.filter = 'completed'; Store.savePrefs({ filter: 'completed' }); this.render(); break;
         case 't': case 'T': this.toggleTheme(); break;
         case '?': UI.toast('N: New task  /: Search  1-3: Filter  T: Theme'); break;
-        case 'Escape': UI.closeStats(); break;
+        case 'Escape': UI.closeStats(); UI.closeEditModal(); this.editing = false; break;
       }
     });
   },
@@ -207,24 +219,32 @@ const App = {
     }, { once: true });
   },
 
-  editTask(id, taskItem) {
+  editTask(id) {
     const todo = this.state.todos.find(t => t.id === id);
-    if (!todo || !taskItem) return;
+    if (!todo) return;
     this.editing = true;
-    UI.startEdit(taskItem, todo, async (newText) => {
+    UI.openEditModal(todo, async (patch) => {
       try {
-        const updated = await Store.update(id, { text: newText });
+        const updated = await Store.update(id, patch);
         this.state.todos = this.state.todos.map(t => t.id === id ? updated : t);
+        this.render();
+        UI.toast('Task updated ✏️');
       } catch (e) {
         UI.toast('Lỗi: ' + e.message);
-      } finally {
-        this.editing = false;
-        this.render();
       }
-    }, () => {
-      this.editing = false;
-      this.render();
     });
+  },
+
+  async commitEdit() {
+    const patch = UI.collectEditPatch();
+    if (!patch) {
+      UI.shakeInput && UI.shakeInput();
+      return;
+    }
+    const onSave = UI._editOnSave;
+    UI.closeEditModal();
+    this.editing = false;
+    if (onSave) await onSave(patch);
   },
 
   async clearCompleted() {

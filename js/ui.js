@@ -25,6 +25,15 @@ const UI = {
       btnStats: document.getElementById('btn-stats'),
       modalStats: document.getElementById('modal-stats'),
       btnCloseStats: document.getElementById('btn-close-stats'),
+      modalEdit: document.getElementById('modal-edit'),
+      btnCloseEdit: document.getElementById('btn-close-edit'),
+      btnCancelEdit: document.getElementById('btn-cancel-edit'),
+      btnSaveEdit: document.getElementById('btn-save-edit'),
+      editText: document.getElementById('edit-text'),
+      editPriority: document.getElementById('edit-priority'),
+      editDueDate: document.getElementById('edit-due-date'),
+      editDueTime: document.getElementById('edit-due-time'),
+      editCategory: document.getElementById('edit-category'),
       emptyState: document.getElementById('empty-state'),
       toastContainer: document.getElementById('toast-container'),
       // Stats
@@ -58,15 +67,15 @@ const UI = {
     const completed = todo.completed ? 'completed' : '';
     let dateStr = todo.dueDate ? Utils.formatDate(todo.dueDate) : '';
     if (dateStr && todo.dueTime) dateStr += ` ${todo.dueTime}`;
-    const overdue = !todo.completed && Utils.isOverdue(todo.dueDate) ? 'overdue' : '';
+    const overdue = !todo.completed && Utils.isOverdue(todo.dueDate, todo.dueTime) ? 'overdue' : '';
 
     return `
-      <li class="task-item ${completed}" 
-          data-id="${todo.id}" 
+      <li class="task-item ${completed} ${overdue}"
+          data-id="${todo.id}"
           data-priority="${todo.priority}"
           draggable="true"
           role="listitem">
-        <button class="task-checkbox" 
+        <button class="task-checkbox"
                 aria-label="${todo.completed ? 'Mark incomplete' : 'Mark complete'}"
                 data-action="toggle" data-id="${todo.id}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
@@ -137,41 +146,43 @@ const UI = {
     }, duration);
   },
 
-  /* ===== Inline Edit =====
-     onCommit(newText) — async; gọi khi user xác nhận text mới
-     onCancel() — gọi khi user hủy hoặc text không đổi (để App tắt cờ editing)
+  /* ===== Edit Modal =====
+     openEditModal(todo, onSave) — populate fields, open. App nghe save click qua nút.
+     onSave(patch) được gọi với { text, priority, category, dueDate, dueTime } khi user click Save.
   */
-  startEdit(taskItem, todo, onCommit, onCancel) {
-    const textEl = taskItem.querySelector('.task-text');
-    const original = todo.text;
+  _editOnSave: null,
+  _editingTodo: null,
 
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'task-edit-input';
-    input.value = original;
+  openEditModal(todo, onSave) {
+    this.els.editText.value = todo.text || '';
+    this.els.editPriority.value = todo.priority || 'medium';
+    this.els.editCategory.value = todo.category || 'personal';
+    this.els.editDueDate.value = todo.dueDate || '';
+    this.els.editDueTime.value = todo.dueTime || '';
+    this._editOnSave = onSave;
+    this._editingTodo = todo;
+    this.els.modalEdit.classList.add('visible');
+    this.els.modalEdit.setAttribute('aria-hidden', 'false');
+    setTimeout(() => this.els.editText.focus(), 60);
+  },
 
-    textEl.replaceWith(input);
-    input.focus();
-    input.select();
+  closeEditModal() {
+    this.els.modalEdit.classList.remove('visible');
+    this.els.modalEdit.setAttribute('aria-hidden', 'true');
+    this._editOnSave = null;
+    this._editingTodo = null;
+  },
 
-    let finished = false;
-    const finishEdit = async () => {
-      if (finished) return;
-      finished = true;
-      const newText = input.value.trim();
-      if (newText && newText !== original) {
-        try { await onCommit(newText); }
-        catch (_) { if (typeof onCancel === 'function') onCancel(); }
-      } else {
-        if (typeof onCancel === 'function') onCancel();
-      }
+  collectEditPatch() {
+    const text = (this.els.editText.value || '').trim();
+    if (!text) return null;
+    return {
+      text,
+      priority: this.els.editPriority.value,
+      category: this.els.editCategory.value,
+      dueDate: this.els.editDueDate.value || null,
+      dueTime: this.els.editDueTime.value || null,
     };
-
-    input.addEventListener('blur', finishEdit);
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-      if (e.key === 'Escape') { input.value = original; input.blur(); }
-    });
   },
 
   /* ===== Statistics Modal ===== */
@@ -199,12 +210,12 @@ const UI = {
       </div>
     `).join('');
 
-    this.els.modalStats.classList.add('open');
+    this.els.modalStats.classList.add('visible');
     this.els.modalStats.setAttribute('aria-hidden', 'false');
   },
 
   closeStats() {
-    this.els.modalStats.classList.remove('open');
+    this.els.modalStats.classList.remove('visible');
     this.els.modalStats.setAttribute('aria-hidden', 'true');
   },
 

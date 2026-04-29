@@ -187,14 +187,73 @@
     </div>
   </div>
 
+  <!-- ===== Edit Task Modal ===== -->
+  <div class="modal-overlay" id="modal-edit" aria-hidden="true">
+    <div class="modal glass-card" role="dialog" aria-label="Edit task">
+      <div class="modal-header">
+        <h2>✏️ Edit task</h2>
+        <button class="btn-icon btn-close-modal" id="btn-close-edit" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="task-input" id="edit-text" autocomplete="off" />
+        <div class="input-options" style="margin-top:.85rem">
+          <div class="option-group">
+            <label class="option-label" for="edit-priority">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="22" x2="4" y2="15"/><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/></svg>
+              Priority
+            </label>
+            <select id="edit-priority" class="option-select">
+              <option value="low">🟢 Low</option>
+              <option value="medium">🟡 Medium</option>
+              <option value="high">🔴 High</option>
+            </select>
+          </div>
+          <div class="option-group">
+            <label class="option-label" for="edit-due-date">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Due
+            </label>
+            <input type="date" id="edit-due-date" class="option-input" />
+          </div>
+          <div class="option-group">
+            <label class="option-label" for="edit-due-time">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Time
+            </label>
+            <input type="time" id="edit-due-time" class="option-input" />
+          </div>
+          <div class="option-group">
+            <label class="option-label" for="edit-category">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+              Tag
+            </label>
+            <select id="edit-category" class="option-select">
+              <option value="personal">Personal</option>
+              <option value="work">Work</option>
+              <option value="study">Study</option>
+              <option value="health">Health</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-text" id="btn-cancel-edit" type="button">Cancel</button>
+          <button class="btn-add btn-save-edit" id="btn-save-edit" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== Keyboard Shortcuts Toast ===== -->
   <div class="toast-container" id="toast-container"></div>
 
   <!-- ===== Scripts ===== -->
-  <script src="js/utils.js?v=4"></script>
-  <script src="js/store.js?v=4"></script>
-  <script src="js/ui.js?v=4"></script>
-  <script src="js/dragdrop.js?v=4"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="js/utils.js?v=5"></script>
+  <script src="js/store.js?v=5"></script>
+  <script src="js/ui.js?v=5"></script>
+  <script src="js/dragdrop.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
 </body>
 </html>

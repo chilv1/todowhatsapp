@@ -106,7 +106,14 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.5);cursor:p
 .tag-category{background:var(--primary-glow);color:var(--primary);font-weight:500}
 .tag-due{background:rgba(116,185,255,.1);color:var(--info);font-weight:500}
 .tag-due.overdue{background:rgba(255,107,107,.1);color:var(--danger)}
+.task-badge.badge-date.overdue{background:rgba(255,107,107,.13);color:var(--danger);font-weight:600}
+.task-item.overdue{border-color:rgba(255,107,107,.45);background:linear-gradient(180deg,rgba(255,107,107,.06),var(--bg-card))}
+.task-item.overdue .task-text{color:var(--danger)}
+.task-item.overdue.completed{border-color:var(--border);background:var(--bg-card)}
+.task-item.overdue.completed .task-text{color:var(--text-3)}
 .assignee-chip{font-size:.65rem;padding:1px 7px;border-radius:var(--radius-full);font-weight:600;letter-spacing:.2px;background:rgba(37,211,102,.14);color:#25d366;border:1px solid rgba(37,211,102,.28)}
+.modal-actions{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}
+.modal-actions .btn-add.btn-save-edit{width:auto;padding:.55rem 1.4rem;border-radius:var(--radius-lg);font-size:.85rem;font-weight:600}
 
 /* Task Actions */
 .task-actions{display:flex;gap:2px;opacity:0;transition:opacity var(--transition-fast)}

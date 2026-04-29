@@ -16,9 +16,11 @@ const Utils = (() => {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
-  function isOverdue(dateStr) {
+  function isOverdue(dateStr, timeStr) {
     if (!dateStr) return false;
-    const d = new Date(dateStr + 'T23:59:59');
+    // Nếu có giờ → chính xác đến phút; không thì lấy 23:59 (cuối ngày)
+    const t = timeStr && /^\d{1,2}:\d{2}$/.test(timeStr) ? timeStr + ':00' : '23:59:59';
+    const d = new Date(dateStr + 'T' + t);
     return d < new Date();
   }
 
