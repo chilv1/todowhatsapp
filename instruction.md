@@ -2,11 +2,11 @@
 
 ## Tổng Quan
 
-Ứng dụng quản lý công việc cá nhân với giao diện hiện đại, hỗ trợ đồng bộ task từ WhatsApp Group.
+Ứng dụng quản lý công việc cá nhân với giao diện hiện đại, đồng bộ task từ WhatsApp Group, hỗ trợ deadline + tự động nhắc khi đến hạn.
 
 **Kiến trúc:**
-- **Frontend**: HTML/CSS/JavaScript thuần, chạy trực tiếp trong trình duyệt
-- **Backend**: Node.js + Express + WhatsApp Web JS — bridge nhận tin nhắn từ WhatsApp Group đẩy vào todo list
+- **Backend** (Node.js + Express + better-sqlite3 + WhatsApp Web JS) — nguồn dữ liệu duy nhất, REST API trên cổng 3000
+- **Frontend** (HTML/CSS/JS thuần) — thin client gọi REST, chỉ giữ theme + filter trong localStorage
 
 ---
 
@@ -14,38 +14,31 @@
 
 ```
 todo-app/
-├── index.html              # Entry point chính
+├── index.html              # Entry point
 ├── css/
 │   ├── index.css           # Biến CSS, theme, layout
-│   ├── components.css      # Buttons, cards, modals, toast
-│   └── animations.css      # Animations
+│   ├── components.css      # Buttons, cards, modals, toast, assignee-chip
+│   └── animations.css
 ├── js/
-│   ├── utils.js            # Helpers (formatDate, debounce, escapeHtml...)
-│   ├── store.js            # State + CRUD + localStorage
+│   ├── utils.js            # formatDate, debounce, escapeHtml…
+│   ├── store.js            # API client (async)
 │   ├── ui.js               # DOM rendering
-│   ├── dragdrop.js         # Drag & drop logic
-│   └── app.js              # Main controller
+│   ├── dragdrop.js         # Drag & drop → App.onReorder
+│   └── app.js              # Main controller (async)
 └── backend/
-    ├── server.js           # WhatsApp bridge + Express API
-    ├── package.json
-    └── node_modules/
+    ├── server.js           # WhatsApp bridge + REST API + reminder loop
+    ├── db.js               # SQLite layer (better-sqlite3, WAL, prepared stmts)
+    ├── migrations/
+    │   └── 001_init.sql    # Schema: tasks, task_assignees, seen_messages
+    ├── data.db             # SQLite database (gitignored)
+    └── package.json
 ```
 
 ---
 
-## Cài Đặt
+## Cài Đặt & Chạy Local
 
-### 1. Frontend (không cần cài gì)
-
-Mở trực tiếp file `index.html` bằng trình duyệt, hoặc chạy local server:
-
-```bash
-cd todo-app
-python3 -m http.server 8080
-# Truy cập: http://localhost:8080
-```
-
-### 2. Backend (tùy chọn — chỉ cần nếu muốn sync WhatsApp)
+### 1. Backend
 
 ```bash
 cd todo-app/backend
@@ -53,174 +46,147 @@ npm install
 node server.js
 ```
 
-Khi chạy lần đầu, terminal sẽ hiện QR code — dùng **WhatsApp** trên điện thoại quét để đăng nhập:
-- Mở WhatsApp → **Settings** → **Linked Devices** → **Link a Device**
-- Quét QR trên terminal
+Lần đầu sẽ in QR code → mở **WhatsApp** trên điện thoại → **Settings** → **Linked Devices** → **Link a Device** → quét.
 
-Sau khi đăng nhập, backend sẽ chạy ở `http://localhost:3000`.
+Backend chạy ở `http://localhost:3000`. Database tự khởi tạo `backend/data.db`.
+
+### 2. Frontend
+
+Phải serve qua HTTP (không dùng `file://`) vì gọi `fetch` cross-origin tới backend:
+
+```bash
+cd todo-app
+python3 -m http.server 8080
+```
+
+Mở `http://localhost:8080`.
+
+### Dừng tất cả
+
+```bash
+pkill -9 -f "node server.js"
+pkill -9 -f "http.server 8080"
+pkill -9 -f "wwebjs_auth/session"
+```
 
 ---
 
-## Hướng Dẫn Sử Dụng
+## REST API (Backend)
 
-### Tạo Task Mới
+| Method | Path | Mô tả |
+|---|---|---|
+| `GET` | `/api/todos` | Liệt kê tất cả task (manual + whatsapp) |
+| `GET` | `/api/todos/:id` | Lấy 1 task |
+| `POST` | `/api/todos` | Tạo task thủ công. Body: `{ text, priority?, category?, dueDate?, dueTime? }` |
+| `PATCH` | `/api/todos/:id` | Cập nhật. Field hợp lệ: `text, priority, category, completed, dueDate, dueTime, order` |
+| `DELETE` | `/api/todos/:id` | Xóa task. Với task whatsapp, `seen_messages` giữ messageId nên bot không add lại |
+| `POST` | `/api/todos/:id/complete` | Mark complete + (nếu là whatsapp) reply tag vào nhóm |
+| `POST` | `/api/todos/clear-completed` | Xóa hàng loạt task **manual** đã hoàn thành |
+| `POST` | `/api/todos/reorder` | Body: `{ ids: [...] }` — set display_order theo thứ tự mảng |
 
-1. Nhập nội dung vào ô **"What needs to be done?"**
-2. Chọn các tùy chọn (không bắt buộc):
-   - **Priority**: 🟢 Low / 🟡 Medium / 🔴 High
-   - **Due**: Ngày hết hạn
-   - **Tag**: Personal / Work / Study / Health / Other
-3. Bấm nút **+** hoặc nhấn **Enter**
+Format ngày trong API:
+- Request: `dueDate: "YYYY-MM-DD"`, `dueTime: "HH:mm"` (optional). Set `dueDate: null` để xóa hạn.
+- Response: cả `dueAt` (ISO UTC) lẫn `dueDate`/`dueTime` (đã chuyển về local TZ của server).
 
-### Quản Lý Task
+---
+
+## Đồng Bộ WhatsApp
+
+### Cú pháp tin nhắn trong Group
+
+```
+#todo @ai_đó nội dung công việc !DEADLINE
+```
+
+| Token deadline | Ý nghĩa |
+|---|---|
+| `!2026-05-01 17:00` | Ngày + giờ cụ thể |
+| `!2026-05-01` | Ngày, mặc định 23:59 |
+| `!01/05/2026 09:30` | DD/MM/YYYY HH:mm |
+| `!30/04` | Năm hiện tại, 23:59 |
+| `!17:00` | Hôm nay 17:00 (đã qua → ngày mai) |
+
+Ví dụ:
+```
+#todo @bạnA Làm slide thuyết trình !2026-05-02 17:00
+#todo @bạnA @bạnB Họp team !09:00
+```
+
+### Cách hoạt động
+
+1. **Ingest**: bot nghe `message_create` trong Group, dedupe qua `seen_messages` (chống replay khi whatsapp-web.js đồng bộ lại)
+2. **Lưu DB**: `tasks` row + `task_assignees` (mention được resolve sang `{id, number, name}`)
+3. **Frontend hiện**: chip `@Tên` xanh WhatsApp, badge ngày + giờ
+4. **Auto-nhắc**: job 30s scan `due_at <= now AND completed=0 AND reminded=0` → reply trong nhóm với @tag thật, mark `reminded=1`
+5. **Hoàn thành**: tick trên web → `POST /api/todos/:id/complete` → bot reply ✅ + tag, set `completed=1`
+
+---
+
+## Quản Lý Task Trên Web
 
 | Hành động | Cách thực hiện |
 |---|---|
-| Đánh dấu hoàn thành | Click vào ô tròn bên trái task |
-| Sửa task | Click nút bút chì → nhập text mới → Enter |
-| Xóa task | Click nút thùng rác |
-| Sắp xếp lại | Kéo và thả task |
-| Tìm kiếm | Gõ vào ô search (tự động lọc) |
-| Lọc | Click tab **All** / **Active** / **Completed** |
-| Xóa tất cả task đã hoàn thành | Click **Clear done** ở footer |
+| Tạo task | Gõ vào "What needs to be done?" → Enter |
+| Hoàn thành | Click ô tròn |
+| Sửa | Click bút chì → Enter |
+| Xóa | Click thùng rác |
+| Sắp xếp | Kéo thả |
+| Tìm | Gõ vào ô search |
+| Lọc | Tab All / Active / Completed |
+| Xóa task done | Footer "Clear done" (chỉ task manual) |
+| Stats | Icon biểu đồ ở header |
+| Export/Import | Footer (JSON, chỉ migrate task manual) |
 
-### Statistics
-
-Click nút biểu đồ ở header để xem:
-- Tổng số task / Hoàn thành / Đang làm / Quá hạn
-- Vòng tròn tiến độ hoàn thành (%)
-- Phân bố theo Priority
-
-### Export / Import
-
-- **Export**: Click nút Export ở footer → tải file `todo-backup-YYYY-MM-DD.json`
-- **Import**: Click nút Import → chọn file JSON đã backup
-  - Task trùng ID sẽ bị bỏ qua (không ghi đè)
-
-### Đổi Theme
-
-Click biểu tượng mặt trăng/mặt trời ở header để chuyển dark/light mode.
-
----
-
-## Phím Tắt
+### Phím tắt
 
 | Phím | Hành động |
 |---|---|
-| `N` | Focus vào ô tạo task mới |
-| `/` | Focus vào ô tìm kiếm |
-| `1` | Filter All |
-| `2` | Filter Active |
-| `3` | Filter Completed |
+| `N` | Focus task input |
+| `/` | Focus search |
+| `1`–`3` | Filter All/Active/Completed |
 | `T` | Toggle theme |
-| `?` | Hiện danh sách phím tắt |
 | `Esc` | Đóng modal |
 
-> **Lưu ý:** Phím tắt không hoạt động khi đang gõ trong input/textarea/select.
-
 ---
 
-## Tính Năng WhatsApp Sync
-
-### Cách dùng
-
-1. Đảm bảo backend đang chạy (`node server.js`)
-2. Trong **WhatsApp Group**, gửi tin nhắn theo format:
+## Database Schema
 
 ```
-#todo Mua sữa cho mẹ
-#todo Họp team lúc 3pm
+tasks (
+  id PK, source ('manual'|'whatsapp'), text, priority, category,
+  due_at ISO, has_time,
+  completed, completed_at,
+  message_id UNIQUE, chat_id, group_name, pusher_name, content,
+  reminded, reminded_at, notified_complete_at,
+  display_order, created_at, updated_at
+)
+task_assignees (task_id FK, wa_id, number, name)
+seen_messages (message_id PK, seen_at)
 ```
 
-3. Frontend tự động poll mỗi 5 giây và thêm task vào danh sách
-4. Task sẽ có format: `[Tên nhóm] Tên người gửi: nội dung`
+Index quan trọng: `idx_tasks_due_pending` (partial: `WHERE completed=0 AND reminded=0 AND due_at IS NOT NULL`) — để job nhắc scan chỉ vài row.
 
-### Lưu ý
+### Inspect database
 
-- Chỉ tin nhắn trong **Group** mới được xử lý (tránh spam từ chat 1-1)
-- Phải bắt đầu bằng `#todo ` (có khoảng trắng phía sau)
-- Task từ WhatsApp mặc định: `category=work`, `priority=medium`, `dueDate=hôm nay`
-- Nếu backend offline, frontend không báo lỗi (silent fail)
-
----
-
-## Lưu Trữ Dữ Liệu
-
-App lưu state trong **localStorage** của trình duyệt:
-
-| Key | Nội dung |
-|---|---|
-| `todo-app-data` | Danh sách task + filter hiện tại |
-| `todo-app-theme` | `dark` hoặc `light` |
-
-> **Cảnh báo:** Xóa cookies/cache trình duyệt sẽ mất hết task. Hãy **Export** định kỳ để backup.
-
----
-
-## Cấu Trúc Một Task
-
-```javascript
-{
-  id: "abc123...",              // Unique ID
-  text: "Mua sữa",              // Nội dung
-  completed: false,             // Trạng thái
-  priority: "medium",           // low | medium | high
-  dueDate: "2026-04-30",        // ISO date hoặc null
-  category: "personal",         // personal | work | study | health | other
-  createdAt: "2026-04-29T...",  // ISO timestamp
-  order: 0                      // Vị trí trong list (cho drag & drop)
-}
+```bash
+sqlite3 backend/data.db "SELECT message_id, completed, reminded, due_at, group_name FROM tasks ORDER BY created_at DESC"
 ```
 
 ---
 
 ## Troubleshooting
 
-### Task không hiển thị sau khi thêm
-
-Mở DevTools → Console kiểm tra lỗi. Có thể do:
-- localStorage bị disable (chế độ private/incognito)
-- JS file load không đúng thứ tự
-
-### Backend WhatsApp không kết nối được
-
-- Đảm bảo đã quét QR code thành công
-- Kiểm tra điện thoại có internet
-- Xóa thư mục `.wwebjs_auth` trong backend rồi chạy lại để đăng nhập mới
-
-### Task từ WhatsApp không xuất hiện
-
-- Kiểm tra backend có đang chạy không (`http://localhost:3000/api/tasks`)
-- Tin nhắn phải gửi trong **Group**, không phải chat 1-1
-- Phải bắt đầu bằng `#todo ` (chữ thường, có khoảng trắng)
-
----
-
-## Bug Đã Biết
-
-⚠️ **Mismatch tên hàm trong [utils.js](js/utils.js):**
-
-File `utils.js` export `generateId` và `getTodayStr`, nhưng các file khác lại gọi `Utils.uuid()` và `Utils.today()`. Cần fix bằng một trong hai cách:
-
-**Cách 1** — Sửa `utils.js` để export đúng tên:
-```javascript
-return { uuid: generateId, today: getTodayStr, formatDate, isOverdue, escapeHtml, debounce };
-```
-
-**Cách 2** — Sửa các call site trong `store.js` và `app.js` thành `Utils.generateId()` và `Utils.getTodayStr()`.
+| Triệu chứng | Cách xử lý |
+|---|---|
+| Task không lên web | Backend chạy chưa? `curl http://localhost:3000/api/todos` |
+| Bot không gửi nhắc | Xem log `tail -f /tmp/server.log` (hoặc terminal chạy node) — phải thấy `⏰ Đã nhắc...` |
+| WhatsApp 401 / mất kết nối | Xóa `backend/.wwebjs_auth/` rồi chạy lại để quét QR mới |
+| Task cũ tự xuất hiện lại | `seen_messages` đã chặn — nếu vẫn lặp, thử `sqlite3 backend/data.db "INSERT OR IGNORE INTO seen_messages VALUES ('<messageId>', datetime('now'))"` |
+| Trình duyệt cache JS cũ | Hard-refresh `Cmd+Shift+R`; hoặc bump `?v=N` trong `index.html` |
 
 ---
 
 ## Tech Stack
 
-**Frontend:**
-- HTML5 (semantic, ARIA)
-- CSS3 (CSS Variables, Grid, Flexbox, glass-morphism)
-- Vanilla JavaScript (ES6+, không framework)
-- Google Fonts: Inter
-
-**Backend:**
-- Node.js + Express 5
-- whatsapp-web.js (Puppeteer)
-- qrcode-terminal
-- CORS
+**Frontend:** HTML5, CSS3 (vars + glass-morphism), Vanilla ES6+, Inter font
+**Backend:** Node.js, Express 5, better-sqlite3 (WAL mode), whatsapp-web.js (Puppeteer), qrcode-terminal, CORS

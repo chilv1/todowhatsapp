@@ -10,7 +10,6 @@ app.use(express.json());
 
 const PORT = 3000;
 const REMINDER_INTERVAL_MS = 30 * 1000; // quét lịch nhắc mỗi 30 giây
-const TASKS_FEED_LIMIT = 200;           // số task gần nhất /api/tasks trả về
 let clientReady = false;
 
 /**
@@ -224,24 +223,7 @@ function genUuid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 11);
 }
 
-/* ===== Legacy endpoint /api/tasks — sẽ bỏ ở Phase 4, hiện giữ cho frontend cũ ===== */
-app.get('/api/tasks', (req, res) => {
-    const rows = db.listRecentWhatsappTasks(TASKS_FEED_LIMIT);
-    const tasks = rows.map(r => ({
-        id: r.id,
-        text: r.text,
-        chatId: r.chatId,
-        messageId: r.messageId,
-        assignees: r.assignees,
-        dueAt: r.dueAt,
-        hasTime: r.hasTime,
-        createdAt: r.createdAt,
-        source: r.source,
-    }));
-    res.json({ tasks });
-});
-
-/* ===== /api/todos — REST CRUD đầy đủ (Phase 2) ===== */
+/* ===== /api/todos — REST CRUD ===== */
 
 app.get('/api/todos', (req, res) => {
     const todos = db.listAllTasks().map(toApiShape);
@@ -368,34 +350,6 @@ app.post('/api/todos/:id/complete', async (req, res) => {
     }
 });
 
-// API endpoint để Frontend báo task đã hoàn thành — bot reply vào nhóm WhatsApp
-app.post('/api/complete', async (req, res) => {
-    const { chatId, messageId, text, assignees } = req.body || {};
-    if (!chatId || !messageId) {
-        return res.status(400).json({ error: 'missing chatId or messageId' });
-    }
-    try {
-        const original = await client.getMessageById(messageId);
-        const tagList = Array.isArray(assignees) ? assignees.filter(a => a && a.id && a.number) : [];
-        const tagPrefix = tagList.map(a => `@${a.number}`).join(' ');
-        const baseReply = `✅ Task đã hoàn thành${text ? `: ${text}` : ''}`;
-        const replyText = tagPrefix ? `${tagPrefix} ${baseReply}` : baseReply;
-        const sendOpts = tagList.length ? { mentions: tagList.map(a => a.id) } : undefined;
-
-        if (original) {
-            await original.reply(replyText, undefined, sendOpts);
-        } else {
-            await client.sendMessage(chatId, replyText, sendOpts);
-        }
-        // Hủy lịch nhắc cho task đã hoàn thành
-        db.markCompletedByMessageId(messageId);
-        console.log(`📤 Đã gửi xác nhận hoàn thành về ${chatId}${tagList.length ? ` (tag ${tagList.length} người)` : ''}`);
-        res.json({ ok: true });
-    } catch (e) {
-        console.error('Reply failed:', e.message);
-        res.status(500).json({ error: e.message });
-    }
-});
 
 // Job định kỳ: quét DB, gửi nhắc khi đến hạn
 async function checkReminders() {

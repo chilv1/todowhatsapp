@@ -55,10 +55,6 @@ const stmts = {
     getTaskByMessageId: db.prepare('SELECT * FROM tasks WHERE message_id = ?'),
     getAssignees: db.prepare('SELECT wa_id AS id, number, name FROM task_assignees WHERE task_id = ?'),
     listAll: db.prepare('SELECT * FROM tasks ORDER BY completed ASC, display_order ASC, created_at DESC'),
-    listRecentWhatsapp: db.prepare(`
-        SELECT * FROM tasks WHERE source = 'whatsapp'
-        ORDER BY created_at DESC LIMIT ?
-    `),
     listDuePending: db.prepare(`
         SELECT * FROM tasks
         WHERE source = 'whatsapp'
@@ -150,10 +146,6 @@ const insertWhatsappTaskTxn = db.transaction((task) => {
 
 function insertWhatsappTask(task) {
     insertWhatsappTaskTxn(task);
-}
-
-function listRecentWhatsappTasks(limit = 200) {
-    return stmts.listRecentWhatsapp.all(limit).map(rowToTask);
 }
 
 function listAllTasks() {
@@ -340,7 +332,6 @@ module.exports = {
     markSeen,
     insertWhatsappTask,
     insertManualTask,
-    listRecentWhatsappTasks,
     listAllTasks,
     listDuePending,
     markReminded,
