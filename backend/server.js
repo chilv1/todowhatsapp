@@ -102,6 +102,22 @@ client.on('ready', () => {
     clientReady = true;
 });
 
+// Khi puppeteer frame bị detach hoặc whatsapp ngắt kết nối → re-initialize
+client.on('disconnected', async (reason) => {
+    console.warn(`⚠️ WhatsApp client disconnected: ${reason}. Đang khởi tạo lại sau 5s...`);
+    clientReady = false;
+    try { await client.destroy(); } catch (_) {}
+    setTimeout(() => {
+        console.log('🔄 Re-initializing WhatsApp client...');
+        client.initialize().catch(e => console.error('Re-init failed:', e.message));
+    }, 5000);
+});
+
+client.on('auth_failure', (msg) => {
+    console.error(`❌ WhatsApp auth failure: ${msg}. Cần quét QR lại — xóa .wwebjs_auth/.`);
+    clientReady = false;
+});
+
 client.on('message_create', async (msg) => {
     // Chỉ xử lý tin nhắn trong group hoặc tin nhắn có tag đặc biệt
     const chat = await msg.getChat();
@@ -345,6 +361,10 @@ app.post('/api/todos/reorder', (req, res) => {
 /**
  * Mark complete + (nếu là task whatsapp) reply tag vào nhóm.
  * Body không cần — server tự lấy chatId/assignees từ DB.
+ *
+ * Nếu reply WhatsApp fail (disconnect, frame detach, …): task vẫn được
+ * mark completed trong DB, response 200 với notified=false + reason.
+ * Frontend KHÔNG nên hiển thị lỗi đỏ — chỉ inform softly.
  */
 app.post('/api/todos/:id/complete', async (req, res) => {
     const id = req.params.id;
@@ -358,6 +378,10 @@ app.post('/api/todos/:id/complete', async (req, res) => {
     // Nếu không phải whatsapp hoặc đã thông báo rồi → trả luôn
     if (t.source !== 'whatsapp' || !t.chatId || !t.messageId || t.notifiedCompleteAt) {
         return res.json({ ok: true, notified: false });
+    }
+
+    if (!clientReady) {
+        return res.json({ ok: true, notified: false, reason: 'whatsapp client offline' });
     }
 
     try {
@@ -377,8 +401,10 @@ app.post('/api/todos/:id/complete', async (req, res) => {
         console.log(`📤 Complete-reply về ${t.chatId}${tagList.length ? ` (tag ${tagList.length} người)` : ''}`);
         res.json({ ok: true, notified: true });
     } catch (e) {
-        console.error('Complete-reply failed:', e.message);
-        res.status(500).json({ error: e.message });
+        // Lỗi puppeteer/frame/network — task đã done trong DB. Không trả 500.
+        // notified_complete_at chưa set → có thể retry sau qua endpoint riêng.
+        console.warn(`⚠️ Complete-reply failed (task vẫn done): ${e.message}`);
+        res.json({ ok: true, notified: false, reason: e.message });
     }
 });
 

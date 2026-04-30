@@ -175,8 +175,12 @@ const App = {
     try {
       let updated;
       if (target && todo.source === 'whatsapp' && todo.chatId && todo.messageId) {
-        await Store.complete(id);
-        UI.toast('Đã thông báo nhóm WhatsApp ✅');
+        const r = await Store.complete(id);
+        if (r && r.notified === false) {
+          UI.toast('Done. WhatsApp tạm offline — chưa kịp tag nhóm.');
+        } else {
+          UI.toast('Đã thông báo nhóm WhatsApp ✅');
+        }
         updated = await this._getById(id);
       } else {
         updated = await Store.update(id, { completed: target });
