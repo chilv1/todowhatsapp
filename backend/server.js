@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const { exec } = require('child_process');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const QRCodeLib = require('qrcode');
@@ -504,7 +505,138 @@ app.listen(PORT, () => {
     console.log(`Đang khởi tạo WhatsApp Client, vui lòng đợi...`);
     if (TG_ENABLED) {
         tgSendText(`🟢 *TodoApp service started* — booting WhatsApp client...`);
+        pollTelegram();
     } else {
         console.log('ℹ️  Telegram notify disabled (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID).');
     }
 });
+
+/* =================================================================
+ * Telegram command bot — long-polling, whitelist by chat_id
+ * ================================================================= */
+
+let lastUpdateId = 0;
+const APP_DIR = '/home/todo/todowhatsapp';
+const LOG_FILE = '/var/log/todoapp.log';
+
+function execShell(cmd, timeoutMs = 10000) {
+    return new Promise((resolve) => {
+        exec(cmd, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+            resolve({ ok: !err, stdout: stdout || '', stderr: stderr || '', err });
+        });
+    });
+}
+
+function fmtUptime(s) {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+    if (h) return `${h}h ${m}m ${sec}s`;
+    if (m) return `${m}m ${sec}s`;
+    return `${sec}s`;
+}
+
+async function ackTelegramUpdates() {
+    if (lastUpdateId <= 0) return;
+    try {
+        await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&limit=1&timeout=0`);
+    } catch (_) { /* ignore */ }
+}
+
+async function tgCmdHelp() {
+    await tgSendText(`*Available commands*
+/status — bot info
+/restart — restart service (systemd auto-revives)
+/logs — last 20 log lines
+/qr — force re-auth (destroys WhatsApp session). Type \`/qr confirm\` to proceed.
+/help — this message`);
+}
+
+async function tgCmdStatus() {
+    const all = db.listAllTasks();
+    const active = all.filter(t => !t.completed).length;
+    const due = db.listDuePending(new Date().toISOString()).length;
+    await tgSendText(`*Status*
+Uptime: ${fmtUptime(process.uptime())}
+WhatsApp: ${clientReady ? '✅ ready' : '⚠️ not ready'}
+Tasks: ${all.length} total, ${active} active
+Due to remind: ${due}`);
+}
+
+async function tgCmdLogs() {
+    const r = await execShell(`tail -20 ${LOG_FILE}`);
+    if (!r.ok) {
+        await tgSendText(`❌ logs failed: \`${(r.err && r.err.message) || r.stderr}\``);
+        return;
+    }
+    let out = r.stdout.trim() || '(empty)';
+    if (out.length > 3500) out = '...' + out.slice(-3500);
+    await tgSendText('```\n' + out + '\n```');
+}
+
+async function tgCmdRestart() {
+    await tgSendText('🔄 Restarting service...');
+    await ackTelegramUpdates();
+    // Async exec — process này sẽ bị kill trong vài giây, systemd revive
+    exec('sudo /usr/bin/systemctl restart todoapp', () => { /* may not run */ });
+}
+
+async function tgCmdQR(confirmed) {
+    if (!confirmed) {
+        await tgSendText(`⚠️ Lệnh này sẽ *xóa session WhatsApp* và buộc quét QR mới.
+Confirm bằng cách gõ: \`/qr confirm\``);
+        return;
+    }
+    await tgSendText('🗑 Wiping `.wwebjs_auth/` và restart — chờ ảnh QR mới trong ~15s...');
+    await ackTelegramUpdates();
+    exec(`rm -rf ${APP_DIR}/backend/.wwebjs_auth && sudo /usr/bin/systemctl restart todoapp`, () => {});
+}
+
+async function handleTgUpdate(update) {
+    lastUpdateId = update.update_id;
+    const msg = update.message;
+    if (!msg || !msg.text || !msg.chat) return;
+    if (String(msg.chat.id) !== String(TG_CHAT)) {
+        console.warn(`tg: ignored cmd from chat ${msg.chat.id} text="${msg.text.slice(0, 30)}"`);
+        return;
+    }
+    const text = msg.text.trim();
+    try {
+        switch (true) {
+            case text === '/help' || text === '/start': return await tgCmdHelp();
+            case text === '/status': return await tgCmdStatus();
+            case text === '/logs': return await tgCmdLogs();
+            case text === '/restart': return await tgCmdRestart();
+            case text === '/qr': return await tgCmdQR(false);
+            case text === '/qr confirm': return await tgCmdQR(true);
+            default:
+                if (text.startsWith('/')) {
+                    await tgSendText(`Unknown command \`${text.split(' ')[0]}\`. Try /help`);
+                }
+        }
+    } catch (e) {
+        console.error('tg cmd error:', e.message);
+        await tgSendText(`❌ Error: \`${e.message}\``);
+    }
+}
+
+async function pollTelegram() {
+    console.log('📲 Telegram command polling started');
+    while (true) {
+        try {
+            const url = `https://api.telegram.org/bot${TG_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=25&allowed_updates=["message"]`;
+            const r = await fetch(url, { signal: AbortSignal.timeout(35000) });
+            if (!r.ok) { await new Promise(s => setTimeout(s, 5000)); continue; }
+            const data = await r.json();
+            if (data.ok && Array.isArray(data.result)) {
+                for (const update of data.result) {
+                    await handleTgUpdate(update);
+                }
+            }
+        } catch (e) {
+            const msg = String(e && e.message || e);
+            if (!msg.includes('aborted') && !msg.includes('Abort')) {
+                console.warn('tg poll error:', msg);
+            }
+            await new Promise(s => setTimeout(s, 5000));
+        }
+    }
+}
