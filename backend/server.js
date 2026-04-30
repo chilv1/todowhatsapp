@@ -2,7 +2,50 @@ const express = require('express');
 const cors = require('cors');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const QRCodeLib = require('qrcode');
 const db = require('./db');
+
+/* ===== Telegram notifications =====
+ * Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID trong env (systemd unit).
+ * Nếu thiếu env → no-op (không crash, không gửi).
+ */
+const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TG_CHAT = process.env.TELEGRAM_CHAT_ID;
+const TG_ENABLED = !!(TG_TOKEN && TG_CHAT);
+let lastQrSentAt = 0;
+const QR_THROTTLE_MS = 25 * 1000; // tối thiểu 25s giữa 2 PNG QR
+let wasDisconnected = false;       // để chỉ gửi "reconnected" khi vừa từ disconnected sang ready
+
+async function tgSendText(text) {
+    if (!TG_ENABLED) return;
+    try {
+        const r = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TG_CHAT, text, parse_mode: 'Markdown', disable_web_page_preview: true }),
+        });
+        if (!r.ok) console.warn(`tg sendMessage ${r.status}`, await r.text().catch(() => ''));
+    } catch (e) {
+        console.warn('tgSendText fail:', e.message);
+    }
+}
+
+async function tgSendPhoto(buffer, caption) {
+    if (!TG_ENABLED) return;
+    try {
+        const form = new FormData();
+        form.append('chat_id', String(TG_CHAT));
+        form.append('caption', caption);
+        form.append('parse_mode', 'Markdown');
+        form.append('photo', new Blob([buffer], { type: 'image/png' }), 'qr.png');
+        const r = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`, {
+            method: 'POST', body: form,
+        });
+        if (!r.ok) console.warn(`tg sendPhoto ${r.status}`, await r.text().catch(() => ''));
+    } catch (e) {
+        console.warn('tgSendPhoto fail:', e.message);
+    }
+}
 
 const app = express();
 app.use(cors());
@@ -92,20 +135,37 @@ const client = new Client({
     }
 });
 
-client.on('qr', (qr) => {
+client.on('qr', async (qr) => {
     console.log('\n--- QUÉT MÃ QR NÀY BẰNG ỨNG DỤNG WHATSAPP TRÊN ĐIỆN THOẠI CỦA BẠN ---');
     qrcode.generate(qr, { small: true });
+
+    // Gửi QR qua Telegram (throttle 25s/lần để không spam khi WA refresh)
+    const now = Date.now();
+    if (now - lastQrSentAt < QR_THROTTLE_MS) return;
+    lastQrSentAt = now;
+    try {
+        const buf = await QRCodeLib.toBuffer(qr, { type: 'png', scale: 10, margin: 4 });
+        await tgSendPhoto(buf, '🔐 *WhatsApp cần quét QR mới*\nQuét trong ~30s, ảnh sẽ refresh sau đó.');
+    } catch (e) {
+        console.warn('QR→Telegram fail:', e.message);
+    }
 });
 
 client.on('ready', () => {
     console.log('✅ WhatsApp Bot đã sẵn sàng!');
     clientReady = true;
+    if (wasDisconnected) {
+        wasDisconnected = false;
+        tgSendText('✅ *Bot reconnected* — WhatsApp client trở lại bình thường.');
+    }
 });
 
 // Khi puppeteer frame bị detach hoặc whatsapp ngắt kết nối → re-initialize
 client.on('disconnected', async (reason) => {
     console.warn(`⚠️ WhatsApp client disconnected: ${reason}. Đang khởi tạo lại sau 5s...`);
     clientReady = false;
+    wasDisconnected = true;
+    tgSendText(`⚠️ *Bot disconnected*: \`${reason}\`\nĐang re-init sau 5s...`);
     try { await client.destroy(); } catch (_) {}
     setTimeout(() => {
         console.log('🔄 Re-initializing WhatsApp client...');
@@ -116,6 +176,7 @@ client.on('disconnected', async (reason) => {
 client.on('auth_failure', (msg) => {
     console.error(`❌ WhatsApp auth failure: ${msg}. Cần quét QR lại — xóa .wwebjs_auth/.`);
     clientReady = false;
+    tgSendText(`❌ *Auth failure*: \`${msg}\`\nVPS: \`rm -rf ~/todowhatsapp/backend/.wwebjs_auth && systemctl restart todoapp\``);
 });
 
 client.on('message_create', async (msg) => {
@@ -441,4 +502,9 @@ setInterval(checkReminders, REMINDER_INTERVAL_MS);
 app.listen(PORT, () => {
     console.log(`🚀 Server đang chạy tại http://localhost:${PORT}`);
     console.log(`Đang khởi tạo WhatsApp Client, vui lòng đợi...`);
+    if (TG_ENABLED) {
+        tgSendText(`🟢 *TodoApp service started* — booting WhatsApp client...`);
+    } else {
+        console.log('ℹ️  Telegram notify disabled (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID).');
+    }
 });
